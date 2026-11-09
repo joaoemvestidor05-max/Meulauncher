@@ -1,0 +1,261 @@
+name: Gerar APK
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Criar os arquivos do projeto
+        run: |
+          mkdir -p app/src/main/java/com/exemplo/meulauncher
+          cat > settings.gradle.kts << 'FIM_ARQUIVO'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MeuLauncher"
+          include(":app")
+          FIM_ARQUIVO
+          cat > build.gradle.kts << 'FIM_ARQUIVO'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          FIM_ARQUIVO
+          cat > gradle.properties << 'FIM_ARQUIVO'
+          org.gradle.jvmargs=-Xmx3g
+          android.useAndroidX=true
+          kotlin.code.style=official
+          FIM_ARQUIVO
+          cat > app/build.gradle.kts << 'FIM_ARQUIVO'
+          // Módulo "app": configurações e bibliotecas do launcher.
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.exemplo.meulauncher"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.exemplo.meulauncher"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              buildFeatures { compose = true }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.activity:activity-compose:1.9.3")
+              implementation("androidx.compose.foundation:foundation:1.7.5")
+              implementation("androidx.compose.material3:material3:1.3.1")
+          }
+          FIM_ARQUIVO
+          cat > app/src/main/AndroidManifest.xml << 'FIM_ARQUIVO'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <!-- Diz que o app é para TV e não exige tela de toque -->
+              <uses-feature android:name="android.software.leanback" android:required="true" />
+              <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+              <!-- Necessário no Android 11+ para o app enxergar os outros apps instalados -->
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                  </intent>
+              </queries>
+
+              <application
+                  android:label="Meu Launcher"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <!-- HOME + DEFAULT = pode ser escolhido como tela inicial da TV -->
+                          <category android:name="android.intent.category.HOME" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          FIM_ARQUIVO
+          cat > app/src/main/java/com/exemplo/meulauncher/MainActivity.kt << 'FIM_ARQUIVO'
+          package com.exemplo.meulauncher
+
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.graphics.Bitmap
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.Image
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.interaction.MutableInteractionSource
+          import androidx.compose.foundation.interaction.collectIsFocusedAsState
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.grid.GridCells
+          import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+          import androidx.compose.foundation.lazy.grid.items
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material3.Text
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.scale
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.asImageBitmap
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.core.graphics.drawable.toBitmap
+
+          // ------------------------------------------------------------------
+          // 1) ESCOLHA AQUI OS APPS QUE VOCÊ QUER VER NA TELA INICIAL
+          //    Coloque o "nome do pacote" de cada app (ex.: o do YouTube é com.google.android.youtube.tv)
+          //    Deixe a lista vazia (listOf()) para mostrar TODOS os apps instalados.
+          // ------------------------------------------------------------------
+          val APPS_PERMITIDOS = listOf<String>(
+              // "com.google.android.youtube.tv",
+              // "com.netflix.ninja",
+          )
+
+          // Modelo simples: cada app tem nome, pacote e ícone
+          data class AppItem(val nome: String, val pacote: String, val icone: Bitmap)
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent { TelaInicial() }
+              }
+          }
+
+          // ------------------------------------------------------------------
+          // 2) BUSCA OS APPS INSTALADOS NA TV
+          // ------------------------------------------------------------------
+          fun buscarApps(pm: PackageManager, meuPacote: String): List<AppItem> {
+              val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER)
+              return pm.queryIntentActivities(intent, 0)
+                  .map { it.activityInfo.packageName to it }
+                  .filter { (pacote, _) -> pacote != meuPacote }                       // não mostra o próprio launcher
+                  .filter { (pacote, _) -> APPS_PERMITIDOS.isEmpty() || pacote in APPS_PERMITIDOS }
+                  .map { (pacote, info) ->
+                      AppItem(
+                          nome = info.loadLabel(pm).toString(),
+                          pacote = pacote,
+                          icone = info.loadIcon(pm).toBitmap()
+                      )
+                  }
+                  .sortedBy { it.nome.lowercase() }
+          }
+
+          // ------------------------------------------------------------------
+          // 3) DESENHA A TELA (grade de ícones)
+          // ------------------------------------------------------------------
+          @Composable
+          fun TelaInicial() {
+              val context = LocalContext.current
+              val apps = remember { buscarApps(context.packageManager, context.packageName) }
+
+              Column(
+                  modifier = Modifier.fillMaxSize().background(Color(0xFF101418)).padding(48.dp)
+              ) {
+                  Text("Meus apps", color = Color.White, fontSize = 32.sp)
+                  Spacer(Modifier.height(24.dp))
+
+                  LazyVerticalGrid(
+                      columns = GridCells.Adaptive(140.dp),
+                      horizontalArrangement = Arrangement.spacedBy(20.dp),
+                      verticalArrangement = Arrangement.spacedBy(20.dp)
+                  ) {
+                      items(apps) { app ->
+                          CartaoApp(app) {
+                              // Ao clicar: abre o app escolhido
+                              val abrir = context.packageManager.getLeanbackLaunchIntentForPackage(app.pacote)
+                              if (abrir != null) context.startActivity(abrir)
+                          }
+                      }
+                  }
+              }
+          }
+
+          // ------------------------------------------------------------------
+          // 4) CADA ÍCONE: aumenta e ganha borda quando o controle remoto passa por cima
+          // ------------------------------------------------------------------
+          @Composable
+          fun CartaoApp(app: AppItem, aoClicar: () -> Unit) {
+              val interacao = remember { MutableInteractionSource() }
+              val focado by interacao.collectIsFocusedAsState()
+
+              Column(
+                  horizontalAlignment = Alignment.CenterHorizontally,
+                  modifier = Modifier
+                      .scale(if (focado) 1.1f else 1f)
+                      .border(
+                          width = if (focado) 3.dp else 0.dp,
+                          color = if (focado) Color.White else Color.Transparent,
+                          shape = RoundedCornerShape(12.dp)
+                      )
+                      .clickable(interactionSource = interacao, indication = null, onClick = aoClicar)
+                      .padding(12.dp)
+              ) {
+                  Image(bitmap = app.icone.asImageBitmap(), contentDescription = app.nome, modifier = Modifier.size(96.dp))
+                  Spacer(Modifier.height(8.dp))
+                  Text(app.nome, color = Color.White, fontSize = 14.sp, maxLines = 1)
+              }
+          }
+          FIM_ARQUIVO
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Compilar APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Publicar APK na aba Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MeuLauncher.apk
+          gh release create "apk-${{ github.run_number }}" MeuLauncher.apk \
+            --title "Meu Launcher #${{ github.run_number }}" \
+            --notes "APK gerado automaticamente."
